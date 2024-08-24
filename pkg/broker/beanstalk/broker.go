@@ -3,7 +3,6 @@ package beanstalk
 import (
 	"errors"
 	"fmt"
-	"sync"
 	"time"
 
 	"github.com/ikool-cn/gobeanstalk-connection-pool"
@@ -15,15 +14,15 @@ const (
 )
 
 type BrokerEngine struct {
-	mu         sync.Mutex
-	bnstlkPool *gobeanstalk.Pool
-	subs       []*subscriber
-	stop       chan struct{}
+	//mu       sync.Mutex
+	connPool *gobeanstalk.Pool
+	//subs       []*subscriber
+	stop chan struct{}
 }
 
 func NewBrokerEngine(addr string) (broker.Broker, error) {
 	return &BrokerEngine{
-		bnstlkPool: &gobeanstalk.Pool{
+		connPool: &gobeanstalk.Pool{
 			Dial: func() (*gobeanstalk.Conn, error) {
 				conn, err := gobeanstalk.Dial(addr)
 				if err != nil {
@@ -37,13 +36,13 @@ func NewBrokerEngine(addr string) (broker.Broker, error) {
 }
 
 func (b *BrokerEngine) Publish(topic string, event broker.Message) error {
-	conn, err := b.bnstlkPool.Get()
+	conn, err := b.connPool.Get()
 	if err != nil {
 		return fmt.Errorf("get beanstalk pool conn: %w", err)
 	}
 
 	defer func() {
-		_ = b.bnstlkPool.Release(conn, err != nil)
+		_ = b.connPool.Release(conn, err != nil)
 	}()
 
 	if err = conn.Use(topic); err != nil {
@@ -58,7 +57,7 @@ func (b *BrokerEngine) Publish(topic string, event broker.Message) error {
 }
 
 func (b *BrokerEngine) Subscribe(topic string, handler broker.HandlerFunc) error {
-	conn, err := b.bnstlkPool.Get()
+	conn, err := b.connPool.Get()
 	if err != nil {
 		return fmt.Errorf("get beanstalk pool conn: %w", err)
 	}
@@ -66,25 +65,26 @@ func (b *BrokerEngine) Subscribe(topic string, handler broker.HandlerFunc) error
 	sub := &subscriber{
 		topic:  topic,
 		handle: handler,
-		stop:   b.stop,
+		// стопать воркера будем по общему каналу от BrokerEngine
+		stop: b.stop,
 	}
 
 	go sub.startWorker(conn)
 
-	b.addSubscriber(sub)
+	//b.addSubscriber(sub)
 
 	return nil
 }
 
-func (b *BrokerEngine) addSubscriber(sub *subscriber) {
-	b.mu.Lock()
-	defer b.mu.Unlock()
-	b.subs = append(b.subs, sub)
-}
+//func (b *BrokerEngine) addSubscriber(sub *subscriber) {
+//	b.mu.Lock()
+//	defer b.mu.Unlock()
+//	b.subs = append(b.subs, sub)
+//}
 
 func (b *BrokerEngine) Close() error {
 	close(b.stop)
-	return b.bnstlkPool.Close()
+	return b.connPool.Close()
 }
 
 type subscriber struct {
