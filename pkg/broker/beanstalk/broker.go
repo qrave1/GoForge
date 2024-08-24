@@ -1,7 +1,6 @@
 package beanstalk
 
 import (
-	"context"
 	"errors"
 	"fmt"
 	"sync"
@@ -22,7 +21,7 @@ type BrokerEngine struct {
 	stop       chan struct{}
 }
 
-func NewBrokerEngine(addr string) (*BrokerEngine, error) {
+func NewBrokerEngine(addr string) (broker.Broker, error) {
 	return &BrokerEngine{
 		bnstlkPool: &gobeanstalk.Pool{
 			Dial: func() (*gobeanstalk.Conn, error) {
@@ -58,12 +57,6 @@ func (b *BrokerEngine) Publish(topic string, event broker.Message) error {
 	return nil
 }
 
-func (b *BrokerEngine) addSubscriber(sub *subscriber) {
-	b.mu.Lock()
-	defer b.mu.Unlock()
-	b.subs = append(b.subs, sub)
-}
-
 func (b *BrokerEngine) Subscribe(topic string, handler broker.HandlerFunc) error {
 	conn, err := b.bnstlkPool.Get()
 	if err != nil {
@@ -83,7 +76,13 @@ func (b *BrokerEngine) Subscribe(topic string, handler broker.HandlerFunc) error
 	return nil
 }
 
-func (b *BrokerEngine) Close(ctx context.Context) error {
+func (b *BrokerEngine) addSubscriber(sub *subscriber) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	b.subs = append(b.subs, sub)
+}
+
+func (b *BrokerEngine) Close() error {
 	close(b.stop)
 	return b.bnstlkPool.Close()
 }
@@ -98,10 +97,10 @@ func (s *subscriber) startWorker(conn *gobeanstalk.Conn) {
 	for {
 		select {
 		case <-s.stop:
-			_ = conn.Close()
+			return
 		default:
 			if err := s.work(conn); err != nil && !errors.Is(err, gobeanstalk.ErrTimedOut) {
-				return
+				return // todo мб и не возвращать при ошибке
 			}
 		}
 	}
